@@ -49,7 +49,7 @@ end
 n_agents = 1000   # Number of agents/workers
 
 # At the top with other parameters
-const DEBUG_PRINT = true  # Add this flag
+const DEBUG_PRINTS = false  # Add this flag
 const N_SIMULATIONS = 1   # Reduce from 1000 to 200
 
 # 3. Distribution Setup
@@ -160,9 +160,9 @@ function firm_decision(w_t::Float64, r_t::Float64, tax_expectations::PolicyExpec
                 println("  A_t: $A_t")
                 println("  η_t: $η_t")
                 println("  A_eff: $A_eff")
-                println("  K_L_ratio: $K_L_ratio")
                 println("  w_t: $w_t")
                 println("  r_t: $r_t")
+                println("  K_L_ratio: $K_L_ratio")
                 println("  τ_current: $(tax_expectations.τ_current)")
                 println("  τ_announced: $(tax_expectations.τ_announced)")
                 println("  Expression value: $((A_eff * K_L_ratio^α) / w_t)")
@@ -225,7 +225,7 @@ function compute_equilibrium(tax_expectations::PolicyExpectations)
     C_0 = Y_t - δ * K_t - adjustment_cost(η_t - tax_expectations.η_mean, θ_values)
     
     # Modify debug prints section
-    if DEBUG_PRINT
+    if DEBUG_PRINTS
         println("\nEquilibrium Debug:")
         println("  Productivity (A_t): $(round(A_t, digits=4))")
         println("  Technology (η_t): $(round(η_t, digits=4))")

@@ -53,8 +53,55 @@ const MCTS_PARAMS = (
     discount_factor = 0.96
 )
 
-# At the top with other parameters
-const BATCH_SIZE = 100  # Make this constant again
+# Optimized for production parallel processing
+const BATCH_SIZE = 200  # Larger batch size for production workloads
+
+# Add this function before the MCTS core functions
+function step_environment(state::PolicyState, action::PolicyAction, debug_print::Bool)
+    # Create PolicyExpectations for RANK model
+    tax_expectations = form_tax_expectations(
+        action.τ_current,
+        action.τ_announced,
+        state.technology_params["μ_eta"],
+        state.technology_params["σ_eta"],
+        state.credibility
+    )
+    
+    try
+        # Get RANK equilibrium
+        rank_equilibrium = compute_equilibrium(tax_expectations)
+        
+        # Update emissions
+        new_emissions = state.emissions + rank_equilibrium["η_t"] * rank_equilibrium["Y_t"]
+        
+        # Update damage beliefs
+        θ_new = state.θ_mean
+        θ_std_new = state.θ_std * 0.95  # Simple uncertainty reduction
+        
+        # Return new state
+        return PolicyState(
+            state.time + 1,
+            rank_equilibrium,
+            new_emissions,
+            θ_new,
+            θ_std_new,
+            vcat(state.tax_history, action.τ_current),
+            state.credibility,
+            state.technology_params
+        )
+    catch e
+        if debug_print
+            println("\nError occurred with these parameters:")
+            println("Technology params:")
+            for (k,v) in state.technology_params
+                println("  $k: $v")
+            end
+            println("Tax history: $(state.tax_history)")
+            println("Credibility: $(state.credibility)")
+        end
+        rethrow(e)
+    end
+end
 
 # Core MCTS Functions
 function get_valid_actions(current_tax::Float64)
@@ -149,40 +196,38 @@ function backpropagate(node::MCTSNode, value::Float64)
     end
 end
 
-# Main MCTS Algorithm with Parallel Processing
+# Streamlined parallel MCTS implementation
 function mcts_search(root_state::PolicyState, n_iterations::Int, max_depth::Int)
     root = MCTSNode(root_state)
+    
+    # Pre-allocate batch results vector outside the loop
+    max_batch_size = min(BATCH_SIZE, n_iterations)
+    batch_results = Vector{Tuple{MCTSNode, Float64}}(undef, max_batch_size)
     
     # Process iterations in batches
     for batch_start in 1:BATCH_SIZE:n_iterations
         batch_end = min(batch_start + BATCH_SIZE - 1, n_iterations)
-        batch_results = Vector{Tuple{MCTSNode, Float64}}(undef, batch_end - batch_start + 1)
+        batch_size = batch_end - batch_start + 1
         
         # Parallel batch processing
-        @threads for i in 1:(batch_end - batch_start + 1)
-            # Selection
+        @threads for i in 1:batch_size
             node = select_node(root)
             
-            # Expansion
             if node.visits > 0
                 expand_node(node)
                 node = isempty(node.children) ? node : rand(node.children)
             end
             
-            # Simulation
             value = simulate(node, max_depth)
-            
-            # Store results for batch update
             batch_results[i] = (node, value)
         end
         
-        # Sequential batch update to maintain tree consistency
-        for (node, value) in batch_results
-            backpropagate(node, value)
+        # Batch update tree
+        for i in 1:batch_size
+            backpropagate(batch_results[i]...)
         end
     end
     
-    # Return best action based on average value
     return argmax(child -> child.total_value / child.visits, root.children).action
 end
 
@@ -199,80 +244,12 @@ function damage_function(emissions::Float64, θ::Float64)
     return θ * emissions^2
 end
 
-# Add step_environment function
-function step_environment(state::PolicyState, action::PolicyAction, debug_print::Bool)
-    # Create PolicyExpectations for RANK model
-    tax_expectations = form_tax_expectations(
-        action.τ_current,
-        action.τ_announced,
-        state.technology_params["μ_eta"],
-        state.technology_params["σ_eta"],
-        state.credibility
-    )
-    
-    try
-        # Get RANK equilibrium
-        rank_equilibrium = compute_equilibrium(tax_expectations)
-        
-        # Update emissions
-        new_emissions = state.emissions + rank_equilibrium["η_t"] * rank_equilibrium["Y_t"]
-        
-        # Update damage beliefs
-        θ_new = state.θ_mean
-        θ_std_new = state.θ_std * 0.95  # Simple uncertainty reduction
-        
-        # Return new state
-        return PolicyState(
-            state.time + 1,
-            rank_equilibrium,
-            new_emissions,
-            θ_new,
-            θ_std_new,
-            vcat(state.tax_history, action.τ_current),
-            state.credibility,
-            state.technology_params
-        )
-    catch e
-        if debug_print
-            println("\nError occurred with these parameters:")
-            println("Technology params:")
-            for (k,v) in state.technology_params
-                println("  $k: $v")
-            end
-            println("Tax history: $(state.tax_history)")
-            println("Credibility: $(state.credibility)")
-        end
-        rethrow(e)
-    end
-end
-
-# Add sequential version for comparison
-function mcts_search_sequential(root_state::PolicyState, n_iterations::Int, max_depth::Int)
-    root = MCTSNode(root_state)
-    
-    for _ in 1:n_iterations
-        # Selection
-        node = select_node(root)
-        
-        # Expansion
-        if node.visits > 0
-            expand_node(node)
-            node = isempty(node.children) ? node : rand(node.children)
-        end
-        
-        # Simulation
-        value = simulate(node, max_depth)
-        
-        # Backpropagation
-        backpropagate(node, value)
-    end
-    
-    return argmax(child -> child.total_value / child.visits, root.children).action
-end
-
-# Modify run_mcts_example to include benchmarking
-function run_mcts_example()
-    # Initialize with RANK model parameters
+# Production initialization function
+function initialize_mcts(
+    initial_tax::Float64 = 0.0,
+    announced_tax::Float64 = 0.0,
+    credibility::Float64 = 0.8
+)
     initial_tech_params = Dict(
         "μ_A" => μ_A,
         "μ_eta" => μ_eta,
@@ -281,40 +258,26 @@ function run_mcts_example()
         "ρ" => ρ
     )
     
-    # Run initial equilibrium to get starting economic state
-    initial_expectations = form_tax_expectations(0.0, 0.0, μ_eta, σ_eta, 0.8)
+    initial_expectations = form_tax_expectations(
+        initial_tax,
+        announced_tax,
+        μ_eta,
+        σ_eta,
+        credibility
+    )
     initial_econ_state = compute_equilibrium(initial_expectations)
     
-    initial_state = PolicyState(
+    return PolicyState(
         0,
         initial_econ_state,
         0.0,
         0.001,
         0.0005,
         Float64[],
-        0.8,
+        credibility,
         initial_tech_params
     )
-    
-    println("\nBenchmarking Sequential MCTS...")
-    sequential_time = @elapsed begin
-        sequential_action = mcts_search_sequential(initial_state, 1400, 5)
-    end
-    
-    println("\nBenchmarking Parallel MCTS...")
-    parallel_time = @elapsed begin
-        parallel_action = mcts_search(initial_state, 1400, 5)
-    end
-    
-    println("\nPerformance Comparison:")
-    println("Sequential Time: $(round(sequential_time, digits=2)) seconds")
-    println("Parallel Time: $(round(parallel_time, digits=2)) seconds")
-    println("Speedup: $(round(sequential_time/parallel_time, digits=2))x")
-    
-    return parallel_action
 end
 
-# Run if script is executed directly
-if abspath(PROGRAM_FILE) == @__FILE__
-    run_mcts_example()
-end
+# Export main functions
+export PolicyState, PolicyAction, mcts_search, initialize_mcts
