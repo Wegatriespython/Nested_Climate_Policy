@@ -1,19 +1,52 @@
 using Random
-include("mcts_parallel.jl")
+# Import ModelParametersModule first
+include("model_parameters.jl")
+using .ModelParametersModule: ModelParameters, DEFAULT_PARAMS
 
-function run_single_policy_search()
+# Then include the other files
+include("climate_model.jl")
+include("mcts_better_parallelisation.jl")
+
+# Example of creating custom parameters
+const ALTERNATIVE_PARAMS = ModelParameters(
+    # Only specify parameters that differ from defaults
+    β = 0.98,
+    σ = 1.5,
+    tax_revenue_weight = 0.7
+)
+
+# Example of how to use it in your code
+function run_policy_analysis()
+    # Using default parameters
+    result1 = run_single_policy_search(DEFAULT_PARAMS)
+    
+    # Using custom parameters
+    custom_params = ModelParameters(
+        exploration_constant = 2.5,
+        tax_revenue_weight = 0.8,
+        batch_size = 78
+    )
+    result2 = run_single_policy_search(custom_params)
+    
+    # Using alternative preset
+    result3 = run_single_policy_search(ALTERNATIVE_PARAMS)
+end
+
+function run_single_policy_search(params::ModelParameters = DEFAULT_PARAMS)
     # Initialize with default parameters
     initial_state = initialize_mcts(
-        0.0,    # initial tax
-        0.0,    # announced tax
-        0.8     # credibility
+        initial_tax = 0.0,    
+        announced_tax = 0.0,    
+        credibility = 0.8,     
+        params = params
     )
     
     # Run MCTS search
     optimal_action = mcts_search(
         initial_state,
-        1000,   # number of iterations
-        5       # search depth
+        1092,    # number of iterations
+        5,      # search depth
+        params
     )
     
     println("\nOptimal Policy Found:")
@@ -23,10 +56,15 @@ function run_single_policy_search()
     return optimal_action
 end
 
-function run_policy_sequence(n_periods::Int)
-    # Store sequence of policies
+function run_policy_sequence(n_periods::Int, params::ModelParameters = DEFAULT_PARAMS)
     policy_sequence = Vector{PolicyAction}()
-    current_state = initialize_mcts()
+    # Fix the initialize_mcts call by providing all default values
+    current_state = initialize_mcts(
+        initial_tax = 0.0,
+        announced_tax = 0.0,
+        credibility = 0.8,
+        params = params
+    )
     
     println("\nComputing optimal policy sequence...")
     
@@ -35,14 +73,13 @@ function run_policy_sequence(n_periods::Int)
         
         optimal_action = mcts_search(
             current_state,
-            1000,   # iterations
-            5       # depth
+            1092,    # iterations
+            5,      # depth
+            params
         )
         
         push!(policy_sequence, optimal_action)
-        
-        # Step environment forward
-        current_state = step_environment(current_state, optimal_action, false)
+        current_state = step_environment(current_state, optimal_action, true, params)
         
         println("  Current Tax: $(round(optimal_action.τ_current, digits=3))")
         println("  Announced Tax: $(round(optimal_action.τ_announced, digits=3))")
@@ -52,19 +89,25 @@ function run_policy_sequence(n_periods::Int)
     return policy_sequence
 end
 
-function run_credibility_comparison()
+function run_credibility_comparison(params::ModelParameters = DEFAULT_PARAMS)
     credibility_levels = [0.2, 0.5, 0.8]
     results = Dict{Float64, PolicyAction}()
     
     println("\nComparing policies under different credibility levels...")
     
     for cred in credibility_levels
-        initial_state = initialize_mcts(0.0, 0.0, cred)
+        initial_state = initialize_mcts(
+            initial_tax = 0.0,
+            announced_tax = 0.0,
+            credibility = cred,
+            params = params
+        )
         
         optimal_action = mcts_search(
             initial_state,
-            1000,   # iterations
-            5       # depth
+            1092,    # iterations
+            5,      # depth
+            params
         )
         
         results[cred] = optimal_action
