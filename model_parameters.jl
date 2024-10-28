@@ -12,8 +12,10 @@ Base.@kwdef struct ModelParameters
     α::Float64 = 0.33          # Capital share parameter
     δ::Float64 = 0.1           # Depreciation rate
     γ::Float64 = 0.1           # Adjustment cost coefficient
+    K_init::Float64 = 1.0       # Initial capital stock
+    n_agents::Int = 1000        # Number of agents/workers
     
-    # Joint distribution parameters
+    # Technology distribution parameters
     μ_A::Float64 = 1.0         # Mean productivity
     μ_eta::Float64 = 1.0       # Mean carbon intensity
     σ_A::Float64 = 0.2         # Std dev of productivity
@@ -23,20 +25,6 @@ Base.@kwdef struct ModelParameters
     # Skill distribution parameters
     θ_min::Float64 = 0.1       # Minimum skill level
     θ_max::Float64 = 1.0       # Maximum skill level
-    n_agents::Int = 1000       # Number of agents/workers
-    
-    # MCTS parameters
-    exploration_constant::Float64 = 2.0
-    tax_changes::Vector{Float64} = [-0.10, -0.05, 0.0, 0.05, 0.10]
-    min_tax::Float64 = 0.0
-    max_tax::Float64 = 0.30
-    discount_factor::Float64 = 0.96
-    batch_size::Int = 20
-    tax_revenue_weight::Float64 = 0.5
-    
-    # Damage function parameters
-    θ_init_mean::Float64 = 0.001
-    θ_init_std::Float64 = 0.0005
 end
 
 # Create the default parameters

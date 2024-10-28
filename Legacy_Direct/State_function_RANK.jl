@@ -7,7 +7,7 @@ using Plots
 using Random
 
 # Import the ModelParametersModule and use its exports explicitly
-include("model_parameters.jl")
+include("../model_parameters.jl")
 using .ModelParametersModule: ModelParameters, DEFAULT_PARAMS
 
 # Set random seed for reproducibility

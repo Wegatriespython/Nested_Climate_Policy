@@ -6,7 +6,8 @@ using Base.Threads
 using BenchmarkTools
 
 # Import RANK model
-include("model_parameters.jl")
+include("../model_parameters.jl")
+using .ModelParametersModule: ModelParameters, DEFAULT_PARAMS
 
 # Define MCTS-specific structures
 struct PolicyState
