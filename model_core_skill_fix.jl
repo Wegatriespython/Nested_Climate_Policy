@@ -28,7 +28,7 @@ module ModelParametersModule
         # Skill distribution parameters
         θ_min::Float64 = 0.1       # Minimum skill level
         θ_max::Float64 = 1.0       # Maximum skill level
-        γ::Float64 = 0.5           # Adjustment cost coefficient
+        γ::Float64 = 0.1          # Reduced from 0.5 to account for output scaling
     end
 
     struct PolicyExpectations
@@ -69,9 +69,13 @@ function compute_aggregate_skill(params::ModelParameters)
 end
 
 # Compute adjustment cost given change in carbon intensity
-function compute_adjustment_cost(Δη::Float64, skill_factor::Float64, params::ModelParameters)
-    # Quadratic adjustment cost weighted by aggregate skill factor
-    return params.γ * (Δη^2) * skill_factor
+function compute_adjustment_cost(Δη::Float64, skill_factor::Float64, Y::Float64, params::ModelParameters)
+    if abs(Δη) < 1e-10  # No technology change
+        return 0.0
+    else
+        # Scale adjustment cost relative to output
+        return params.γ * (Δη^2) * skill_factor * Y
+    end
 end
 
 # Function to sample technology parameters
@@ -83,58 +87,95 @@ function sample_technology(params::ModelParameters)
     μ = [params.μ_A, params.μ_η]
     dist = MvNormal(μ, Σ)
     
-    # Sample and ensure period 1 is at least as good as period 0
+    # Sample period 0 technology
     samples_0 = rand(dist, 1)
     A_0, η_0 = samples_0[1, 1], samples_0[2, 1]
     
-    # Keep sampling for period 1 until we get better technology
-    while true
-        samples_1 = rand(dist, 1)
-        A_1, η_1 = samples_1[1, 1], samples_1[2, 1]
+    # Sample multiple potential period 1 technologies
+    n_samples = 5  # Number of potential future technologies to consider
+    potential_techs = rand(dist, n_samples)
+    
+    # Calculate effective productivity for each potential technology
+    # Using a reference tax rate (could be made parameter)
+    τ_ref = 0.05  
+    A_eff_0 = A_0 * (1 - τ_ref * η_0)
+    
+    best_tech = nothing
+    best_improvement = 0.0
+    
+    for i in 1:n_samples
+        A_1, η_1 = potential_techs[1, i], potential_techs[2, i]
+        A_eff_1 = A_1 * (1 - τ_ref * η_1)
         
-        # Check if period 1 technology is better (higher effective productivity)
-        if A_1 ≥ A_0 && η_1 ≤ η_0
-            return (A_0, η_0, A_1, η_1)
+        # Calculate relative improvement
+        improvement = (A_eff_1 - A_eff_0) / A_eff_0
+        
+        if improvement > best_improvement
+            best_improvement = improvement
+            best_tech = (A_1, η_1)
         end
+    end
+    
+    # If no improvement found, stay with current technology
+    if best_tech === nothing || best_improvement < 0.01  # Minimum threshold for change
+        return (A_0, η_0, A_0, η_0)  # No technology change
+    else
+        return (A_0, η_0, best_tech[1], best_tech[2])
     end
 end
 
 # Core equilibrium solver becomes purely deterministic
 function compute_equilibrium_core(τ::Float64, A_0::Float64, η_0::Float64, A_1::Float64, η_1::Float64, skill_factor::Float64, params::ModelParameters)
-    # Compute adjustment cost
-    Δη = η_1 - η_0
-    adj_cost = compute_adjustment_cost(Δη, skill_factor, params)
+    # Normalize productivity relative to A_0
+    normalization_factor = 1.0 / A_0
+    A_0_norm = 1.0  # A_0 * normalization_factor = 1.0
+    A_1_norm = A_1 * normalization_factor
+    
+    # Scale initial capital and other parameters accordingly
+    K_0_norm = params.K_init * normalization_factor
+    
+    # Estimate potential output with normalized values
+    potential_Y0 = (1 - τ*η_0) * (K_0_norm^params.α)  # Now with A_0 = 1
+    max_Y = 5.0 * potential_Y0
     
     model = Model(Ipopt.Optimizer)
     set_optimizer_attribute(model, "print_level", 0)  # Suppress Ipopt output
     set_silent(model)  # Suppress JuMP output
-
-    # Variables (with tighter bounds for numerical stability)
+    
+    # Variables with adjusted bounds
     @variables(model, begin
-        0.1 <= C_0 <= 2.0    # Consumption
-        0.1 <= C_1 <= 2.0
-        0.1 <= L_0 <= 1.0    # Labor (normalized to max of 1)
-        0.1 <= L_1 <= 1.0
-        0.1 <= K_1 <= 2.0    # Capital stock
-        0.1 <= w_0 <= 2.0    # Wage
-        0.1 <= w_1 <= 2.0
-        0.0 <= r_1 <= 0.5    # Interest rate
+        0.01 <= C_0 <= 5.0 * max_Y    # Allow for higher consumption
+        0.01 <= C_1 <= 5.0 * max_Y
+        0.01 <= L_0 <= 1.0    # Labor still normalized to 1 as it represents fraction of time
+        0.01 <= L_1 <= 1.0
+        0.01 <= K_1 <= 3.0 * max_Y  # Allow for higher capital accumulation
+        0.01 <= w_0 <= 3.0 * max_Y  # Higher wage bounds
+        0.01 <= w_1 <= 3.0 * max_Y
+        0.0 <= r_1 <= 2.0    # Allow for higher returns
     end)
 
-    # Production and capital
-    K_0 = params.K_init
-    @expression(model, Y_0, (1 - τ*η_0)*A_0 * K_0^params.α * L_0^(1-params.α))
-    @expression(model, Y_1, (1 - τ*η_1)*A_1 * K_1^params.α * L_1^(1-params.α))
+    # Compute effective labor adjustment from technology change
+    Δη = η_1 - η_0
+    labor_efficiency = if abs(Δη) < 1e-10
+        1.0
+    else
+        1.0 / (1.0 + params.γ * (Δη^2) * skill_factor)  # Hyperbolic form ensures efficiency ∈ (0,1]
+    end
+    
+    # Modified production function with labor efficiency
+    @expression(model, Y_0, (1 - τ*η_0) * K_0_norm^params.α * (labor_efficiency * L_0)^(1-params.α))
+    @expression(model, Y_1, (1 - τ*η_1) * A_1_norm * K_1^params.α * L_1^(1-params.α))
 
     # Tax revenue
-    @expression(model, Tax_0, τ*η_0*A_0 * K_0^params.α * L_0^(1-params.α))
-    @expression(model, Tax_1, τ*η_1*A_1 * K_1^params.α * L_1^(1-params.α))
+    @expression(model, Tax_0, τ*η_0 * K_0_norm^params.α * (labor_efficiency * L_0)^(1-params.α))
+    @expression(model, Tax_1, τ*η_1 * A_1_norm * K_1^params.α * L_1^(1-params.α))
 
-    # Market clearing and optimality conditions
-    @constraint(model, w_0 == (1-params.α) * Y_0 / L_0)
-    @constraint(model, w_1 == (1-params.α) * Y_1 / L_1)
+    # Modified wage to reflect effective labor
+    @constraint(model, w_0 == (1-params.α) * (1 - τ*η_0) * K_0_norm^params.α * 
+               (labor_efficiency * L_0)^(-params.α) * labor_efficiency)
+    @constraint(model, w_1 == (1-params.α) * (1 - τ*η_1) * A_1_norm * K_1^params.α * L_1^(-params.α))
     @constraint(model, r_1 == params.α * Y_1 / K_1 - params.δ)
-    @constraint(model, C_0 + K_1 + adj_cost == Y_0 + (1-params.δ)*K_0 + Tax_0)
+    @constraint(model, C_0 + K_1 == Y_0 + (1-params.δ)*K_0_norm + Tax_0)
     @constraint(model, C_1 == Y_1 + Tax_1)
     @constraint(model, C_0^(-params.σ) == params.β * (1 + r_1) * C_1^(-params.σ))
     @constraint(model, params.χ * L_0^params.ν == w_0 * C_0^(-params.σ))
@@ -147,35 +188,46 @@ function compute_equilibrium_core(τ::Float64, A_0::Float64, η_0::Float64, A_1:
     )
 
     optimize!(model)
-
+    
     status = termination_status(model)
     if status != MOI.LOCALLY_SOLVED && status != MOI.OPTIMAL
-        println("τ: $τ, params: $params")
+        println("Skill factor: $skill_factor")
+        println("Running the new model core")
+        println("\nOptimization failed:")
+        println("τ: $τ")
+        println("A_0: $A_0, η_0: $η_0")
+        println("A_1: $A_1, η_1: $η_1")
+        println("labor_efficiency: $labor_efficiency")
+        println("Status: $status")
         error("Solver did not find an optimal solution. Status: $status")
-      
     end
-
-    return Dict(
-        "C_0" => value(C_0),
-        "C_1" => value(C_1),
-        "L_0" => value(L_0),
-        "L_1" => value(L_1),
-        "K_0" => K_0,
-        "K_1" => value(K_1),
-        "w_0" => value(w_0),
-        "w_1" => value(w_1),
-        "r_1" => value(r_1),
-        "Y_0" => value(Y_0),
-        "Y_1" => value(Y_1),
-        "Tax_0" => value(Tax_0),
-        "Tax_1" => value(Tax_1),
-        "A_0" => A_0,
-        "A_1" => A_1,
-        "η_0" => η_0,
-        "η_1" => η_1,
-        "Adj_Cost" => adj_cost,
-        "Skill_Factor" => skill_factor
-    )
+    
+    # De-normalize results before returning
+    if status in [MOI.LOCALLY_SOLVED, MOI.OPTIMAL]
+        return Dict(
+            "C_0" => value(C_0) / normalization_factor,
+            "C_1" => value(C_1) / normalization_factor,
+            "L_0" => value(L_0),  # Labor remains normalized
+            "L_1" => value(L_1),
+            "K_0" => K_0_norm / normalization_factor,
+            "K_1" => value(K_1) / normalization_factor,
+            "w_0" => value(w_0) / normalization_factor,
+            "w_1" => value(w_1) / normalization_factor,
+            "r_1" => value(r_1),  # Returns are already normalized
+            "Y_0" => value(Y_0) / normalization_factor,
+            "Y_1" => value(Y_1) / normalization_factor,
+            "Tax_0" => value(Tax_0) / normalization_factor,
+            "Tax_1" => value(Tax_1) / normalization_factor,
+            "A_0" => A_0,  # Keep original values for reference
+            "A_1" => A_1,
+            "η_0" => η_0,
+            "η_1" => η_1,
+            "Labor_Efficiency" => labor_efficiency,
+            "Skill_Factor" => skill_factor
+        )
+    else
+        error("Solver did not find an optimal solution. Status: $(termination_status(model))")
+    end
 end
 
 # Wrapper handles all stochastic elements

@@ -1,7 +1,7 @@
-# Theoretical Formulation of a Two-Period RANK Model with Climate Policy Extensions
+# Theoretical Formulation of a Two-Period GE Model with Climate Policy Extensions
 
 ## Introduction
-This document presents a theoretical formulation of a two-period Representative Agent New Keynesian (RANK) model with climate policy extensions. The model explicitly incorporates the joint distribution of capital productivity and carbon intensity, allowing firms to face trade-offs based on the correlation between these factors. Additionally, it introduces a distribution of worker skills inversely related to job adjustment costs, capturing labor market frictions associated with changes in firms' carbon intensity.
+This document presents a theoretical formulation of a two-period General Equilibrium(GE) model with climate policy extensions. The model explicitly incorporates the joint distribution of capital productivity and carbon intensity, allowing firms to face trade-offs based on the correlation between these factors. Additionally, it introduces a distribution of worker skills inversely related to job adjustment costs, capturing labor market frictions associated with changes in firms' carbon intensity.
 
 ## Overview
 The model examines the decisions of firms and households over two periods, integrating climate policy through an emission tax. Firms can continuously adjust their capital stock without adjustment costs, choosing capital varieties with different productivity and carbon intensity levels. Workers' adjustment costs in the labor market depend on both their skill levels and changes in the carbon intensity of firms' capital stock.
@@ -166,7 +166,7 @@ Policy Analysis:
 Investigate how changes in $\tau$, $\gamma$, and $\rho$ affect the equilibrium outcomes.
 Assess the impact of emission taxes on firms' technology choices and labor market dynamics.
 Extension to Heterogeneous Agents: 
-While the current model is a RANK framework, extending it to a HANK model would involve introducing heterogeneity in agents' wealth and consumption.
+While the current model is a GE framework, extending it to a HANK model would involve introducing heterogeneity in agents' wealth and consumption.
 
 ## Conclusion
-This theoretical formulation integrates a joint distribution of capital productivity and carbon intensity into a two-period RANK model with climate policy considerations. Firms face a trade-off between productivity and carbon emissions due to the emission tax and the correlation between $A_t$ and $\eta_t$. Workers experience adjustment costs related to changes in firms' carbon intensity, inversely proportional to their skill levels. The model provides a feasible framework to analyze the effects of climate policy on macroeconomic variables, firms' technology adoption, and labor market dynamics.
+This theoretical formulation integrates a joint distribution of capital productivity and carbon intensity into a two-period GE model with climate policy considerations. Firms face a trade-off between productivity and carbon emissions due to the emission tax and the correlation between $A_t$ and $\eta_t$. Workers experience adjustment costs related to changes in firms' carbon intensity, inversely proportional to their skill levels. The model provides a feasible framework to analyze the effects of climate policy on macroeconomic variables, firms' technology adoption, and labor market dynamics.

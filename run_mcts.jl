@@ -1,18 +1,20 @@
 using Random
-# Import ModelParametersModule first
+# First include parameters
 include("model_parameters.jl")
 using .ModelParametersModule: ModelParameters, DEFAULT_PARAMS
 
-# Then include the other files
-include("climate_model.jl")
+# Then include model core
+include("model_core_skill_fix.jl")
+
+# Finally include MCTS implementation
 include("mcts_better_parallelisation.jl")
 
 # Example of creating custom parameters
 const ALTERNATIVE_PARAMS = ModelParameters(
-    # Only specify parameters that differ from defaults
     β = 0.98,
     σ = 1.5,
-    tax_revenue_weight = 0.7
+    tax_revenue_weight = 0.7,
+    discount_factor = 0.95
 )
 
 # Example of how to use it in your code
@@ -24,7 +26,8 @@ function run_policy_analysis()
     custom_params = ModelParameters(
         exploration_constant = 2.5,
         tax_revenue_weight = 0.8,
-        batch_size = 78
+        batch_size = 78,
+        discount_factor = 0.97
     )
     result2 = run_single_policy_search(custom_params)
     

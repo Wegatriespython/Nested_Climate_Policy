@@ -18,6 +18,7 @@ struct PolicyState
     tax_history::Vector{Float64}
     credibility::Float64
     technology_params::Dict{String, Float64}
+    labor_efficiency::Float64    # New field
 end
 
 struct PolicyAction
@@ -48,37 +49,26 @@ mutable struct MCTSNode
     end
 end
 
-# MCTS Parameters
-const MCTS_PARAMS = (
-    exploration_constant = 2.0,
-    tax_changes = [-0.10, -0.05, 0.0, 0.05, 0.10],
-    min_tax = 0.0,
-    max_tax = 0.30,
-    discount_factor = 0.96
-)
-
 # Optimized for production parallel processing
 const BATCH_SIZE = 20  # Reduced from 200 to better match our iteration count
 
-# Add this constant with other MCTS parameters
-const EVALUATION_PARAMS = (
-    tax_revenue_weight = 0.5,  # Weight for tax revenue in utility function
-)
-
 # Add this function before the MCTS core functions
 function step_environment(state::PolicyState, action::PolicyAction, debug_print::Bool, params::ModelParameters)
-    # Create PolicyExpectations for RANK model
+    # Create tax expectations
     tax_expectations = form_tax_expectations(
         action.τ_current,
         action.τ_announced,
-        state.technology_params["μ_eta"],
-        state.technology_params["σ_eta"],
+        state.technology_params["μ_η"],      # Changed from μ_eta
+        state.technology_params["σ_η"],      # Changed from σ_eta
         state.credibility
     )
     
     try
         # Get RANK equilibrium with params
         equilibrium = compute_equilibrium(tax_expectations, params)
+        
+        # Get labor efficiency if available, otherwise use 1.0
+        new_labor_efficiency = get(equilibrium, "Labor_Efficiency", 1.0)
         
         # Update emissions
         new_emissions = state.emissions + equilibrium["η_t"] * equilibrium["Y_t"]
@@ -87,7 +77,6 @@ function step_environment(state::PolicyState, action::PolicyAction, debug_print:
         θ_new = state.θ_mean
         θ_std_new = state.θ_std * 0.95  # Simple uncertainty reduction
         
-        # Return new state
         return PolicyState(
             state.time + 1,
             equilibrium,
@@ -96,17 +85,15 @@ function step_environment(state::PolicyState, action::PolicyAction, debug_print:
             θ_std_new,
             vcat(state.tax_history, action.τ_current),
             state.credibility,
-            state.technology_params
+            state.technology_params,
+            new_labor_efficiency
         )
     catch e
         if debug_print
-            println("\nError occurred with these parameters:")
-            println("Technology params:")
-            for (k,v) in state.technology_params
-                println("  $k: $v")
-            end
-            println("Tax history: $(state.tax_history)")
-            println("Credibility: $(state.credibility)")
+            println("\nError in step_environment:")
+            println("Action: τ_current = $(action.τ_current), τ_announced = $(action.τ_announced)")
+            println("State: time = $(state.time), credibility = $(state.credibility)")
+            println("Error: $e")
         end
         rethrow(e)
     end
@@ -211,7 +198,7 @@ function simulate(node::MCTSNode, max_depth::Int, params::ModelParameters)
     end
     
     action = rand(valid_actions)
-    next_state = step_environment(node.state, action, false, params)  # Debug prints off
+    next_state = step_environment(node.state, action, false, params)
     
     return evaluate_state(node.state, params) + 
            params.discount_factor * simulate(MCTSNode(next_state), max_depth - 1, params)
@@ -268,18 +255,21 @@ end
 
 # Evaluation Functions
 function evaluate_state(state::PolicyState, params::ModelParameters)
-    # Economic output
+    # Economic output (already includes labor efficiency effects)
     output = state.economic_state["Y_t"]
     
     # Climate damages
     damages = damage_function(state.emissions, state.θ_mean)
     
-    # Tax revenue (τ * Y)
+    # Tax revenue
     current_tax = isempty(state.tax_history) ? 0.0 : last(state.tax_history)
     tax_revenue = current_tax * output
     
-    # Total utility: output - damages + weighted tax revenue
-    return output - damages + params.tax_revenue_weight * tax_revenue
+    # Labor efficiency penalty (small penalty for low efficiency)
+    efficiency_penalty = (1.0 - state.labor_efficiency) * output * 0.1
+    
+    # Total utility: output - damages + weighted tax revenue - efficiency penalty
+    return output - damages + params.tax_revenue_weight * tax_revenue - efficiency_penalty
 end
 
 function damage_function(emissions::Float64, θ::Float64)
@@ -296,20 +286,24 @@ function initialize_mcts(;
 )
     initial_tech_params = Dict(
         "μ_A" => params.μ_A,
-        "μ_eta" => params.μ_eta,
+        "μ_η" => params.μ_η,
         "σ_A" => params.σ_A,
-        "σ_eta" => params.σ_eta,
+        "σ_η" => params.σ_η,
         "ρ" => params.ρ
     )
     
     initial_expectations = form_tax_expectations(
         initial_tax,
         announced_tax,
-        params.μ_eta,
-        params.σ_eta,
+        params.μ_η,
+        params.σ_η,
         credibility
     )
+    
     initial_econ_state = compute_equilibrium(initial_expectations, params)
+    
+    # Get initial labor efficiency (will be 1.0 for initial state)
+    initial_labor_efficiency = 1.0
     
     return PolicyState(
         0,
@@ -319,7 +313,8 @@ function initialize_mcts(;
         params.θ_init_std,
         Float64[],
         credibility,
-        initial_tech_params
+        initial_tech_params,
+        initial_labor_efficiency
     )
 end
 

@@ -3,7 +3,7 @@
 ## Model Structure
 The model consists of a nested structure:
 1. Outer loop: Climate policy maker (social planner)
-2. Inner loop: Two-Period RANK Model
+2. Inner loop: Two-Period General Equilibrium(GE) Model
 
 ## Markov Decision Process Formalization
 The system evolves as a Markov Decision Process (MDP) where:
@@ -12,11 +12,11 @@ $$S_t = f(a_t | S_{t-1})$$
 
 Where:
 - $S_t$ is the state vector at time $t$ containing:
-  - Economic variables from RANK model ($Y_t, C_t,$ etc.)
+  - Economic variables from GE model ($Y_t, C_t,$ etc.)
   - Cumulative emissions $E_t = \sum_{i=0}^t \eta_i Y_i$
   - Current damage function parameters $\theta_t$
 - $a_t$ is the policy action vector: $[\tau_t, \tau_{t+1}]$
-- $f(\cdot)$ is the transition function (Two-Period RANK model)
+- $f(\cdot)$ is the transition function (Two-Period GE model)
 
 ## Policy Maker's Problem
 
@@ -49,7 +49,7 @@ $a_t \in A$ where $A$ is the discrete action space:
 $$A = \{\tau_t \pm \{5, 10\} \text{ basis points}\}$$
 
 ## Agent Expectations
-Agents in the RANK model form expectations of future carbon taxes:
+Agents in the GE model form expectations of future carbon taxes:
 
 $$\mathbb{E}_t[\tau_{t+1}] = h(a_t, \Omega_t)$$
 
@@ -64,7 +64,7 @@ Where:
 1. Period t begins with state $S_t$
 2. Policy maker observes $S_t$ and chooses $a_t = [\tau_t, \tau_{t+1}]$
 3. Agents observe $a_t$ and form expectations
-4. RANK model solves for equilibrium
+4. GE model solves for equilibrium
 5. Damages realized, new information $\epsilon_t$ received
 6. System transitions to $S_{t+1}$
 
@@ -85,19 +85,19 @@ end
 ```
 
 ### 2. Transition Function Integration
-1. **RANK Model as Inner Loop**
-   - Use existing RANK model as f(aₜ|Sₜ₋₁)
+1. **GE Model as Inner Loop**
+   - Use existing GE model as f(aₜ|Sₜ₋₁)
    - Extend equilibrium computation to track emissions
    - Add damage calculations to economic outcomes
 
 2. **State Transitions**
 ```julia
 function state_transition(current_state, policy_action)
-    # 1. RANK Model Equilibrium
-    rank_equilibrium = compute_equilibrium(policy_action)
+    # 1. GE Model Equilibrium
+    GE_equilibrium = compute_equilibrium(policy_action)
     
     # 2. Emissions Accumulation
-    E_t = current_state.emissions + η_t * rank_equilibrium["Y_t"]
+    E_t = current_state.emissions + η_t * GE_equilibrium["Y_t"]
     
     # 3. Damage Learning
     θ_t = damage_function_learning(current_state.damage_params, E_t)
@@ -150,7 +150,7 @@ end
    1. Start with state Sₜ
    2. Policy maker chooses [τₜ, τₜ₊₁]
    3. Agents form expectations
-   4. RANK model computes equilibrium
+   4. GE model computes equilibrium
    5. Update state (emissions, damages, learning)
    6. Transition to Sₜ₊₁
 

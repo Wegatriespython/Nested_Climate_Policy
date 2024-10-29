@@ -3,7 +3,7 @@ using Optim
 using LinearAlgebra
 
 # Import our custom types and parameters
-include("types.jl")
+include("../types.jl")
 using .ModelParametersModule: ModelParameters, DEFAULT_PARAMS
 
 """

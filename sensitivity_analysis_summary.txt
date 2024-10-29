@@ -1,0 +1,19 @@
+Sensitivity Analysis Summary
+===========================
+
+Overall Success Rate: 83.33%
+
+Success Rates by Initial Productivity (A0):
+  A0 = 1.00: 83.33%
+
+Labor Efficiency Statistics (Successful Cases):
+  Mean: 0.999
+  Std Dev: 0.001
+  Min: 0.996
+  Max: 1.000
+
+Output Statistics (Successful Cases):
+  Mean: 0.834
+  Std Dev: 0.085
+  Min: 0.724
+  Max: 0.965
