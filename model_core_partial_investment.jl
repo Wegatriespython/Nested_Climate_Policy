@@ -190,7 +190,55 @@ function compute_equilibrium_core(τ::Float64, A_0::Float64, η_0::Float64, A_1:
     
     status = termination_status(model)
     if status != MOI.LOCALLY_SOLVED && status != MOI.OPTIMAL
-        error("Solver did not find an optimal solution. Status: $status")
+        # Create detailed parameter dump
+        param_dump = """
+        Optimization failed with status: $status
+        
+        Input Parameters:
+        ----------------
+        τ: $τ
+        A_0: $A_0, η_0: $η_0
+        A_1: $A_1, η_1: $η_1
+        skill_factor: $skill_factor
+        
+        Model Parameters:
+        ----------------
+        β: $(params.β)
+        σ: $(params.σ)
+        χ: $(params.χ)
+        ν: $(params.ν)
+        α: $(params.α)
+        δ: $(params.δ)
+        γ: $(params.γ)
+        K_init: $(params.K_init)
+        
+        Technology Parameters:
+        --------------------
+        μ_A: $(params.μ_A)
+        μ_η: $(params.μ_η)
+        σ_A: $(params.σ_A)
+        σ_η: $(params.σ_η)
+        ρ: $(params.ρ)
+        
+        Skill Parameters:
+        ----------------
+        θ_min: $(params.θ_min)
+        θ_max: $(params.θ_max)
+        
+        Investment Parameters:
+        --------------------
+        investment_adjustment_cost: $(params.investment_adjustment_cost)
+        min_investment_fraction: $(params.min_investment_fraction)
+        max_investment_fraction: $(params.max_investment_fraction)
+        
+        Derived Values:
+        --------------
+        normalization_factor: $normalization_factor
+        potential_Y0: $potential_Y0
+        max_Y: $max_Y
+        """
+        
+        error(param_dump)
     end
     
     # Return results with technology split information and evaluated labor efficiency
@@ -231,8 +279,23 @@ function compute_equilibrium(expectations::PolicyExpectations, params::ModelPara
     result = try
         compute_equilibrium_core(τ_0, A_0, η_0, A_1, η_1, skill_factor, params)
     catch e
-        println("Error in compute_equilibrium_core: $e")
-        return Dict()
+        println("\nError in compute_equilibrium:")
+        println("Policy Expectations:")
+        println("  τ_current: $(expectations.τ_current)")
+        println("  τ_announced: $(expectations.τ_announced)")
+        println("  credibility: $(expectations.credibility)")
+        println("  η_mean: $(expectations.η_mean)")
+        println("  η_std: $(expectations.η_std)")
+        println("\nError details:")
+        println(e)
+        return Dict(
+            "error" => true,
+            "error_message" => string(e)
+        )
+    end
+    
+    if get(result, "error", false)
+        return result
     end
     
     # Transform result to match expected API
@@ -241,12 +304,12 @@ function compute_equilibrium(expectations::PolicyExpectations, params::ModelPara
         "r_t" => result["r_1"],     
         "A_t" => result["A_0"],     
         "η_t" => result["η_0"],     
-        "K_t" => result["K_1"],     # Note: Using K_1 instead of K_0
+        "K_t" => result["K_1"],     
         "L_t" => result["L_0"],     
         "Y_t" => result["Y_0"],     
         "C_0" => result["C_0"],
         "Labor_Efficiency" => result["Labor_Efficiency"],
-        "Technology_Split" => result["Technology_Split"]  # New field
+        "Technology_Split" => result["Technology_Split"]
     )
 end
 

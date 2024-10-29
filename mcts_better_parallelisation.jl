@@ -19,6 +19,7 @@ struct PolicyState
     credibility::Float64
     technology_params::Dict{String, Float64}
     labor_efficiency::Float64    # New field
+    technology_split::Float64    # New field for tracking investment split
 end
 
 struct PolicyAction
@@ -58,45 +59,60 @@ function step_environment(state::PolicyState, action::PolicyAction, debug_print:
     tax_expectations = form_tax_expectations(
         action.τ_current,
         action.τ_announced,
-        state.technology_params["μ_η"],      # Changed from μ_eta
-        state.technology_params["σ_η"],      # Changed from σ_eta
+        state.technology_params["μ_η"],
+        state.technology_params["σ_η"],
         state.credibility
     )
     
-    try
-        # Get RANK equilibrium with params
-        equilibrium = compute_equilibrium(tax_expectations, params)
+    # Get RANK equilibrium with params
+    equilibrium = compute_equilibrium(tax_expectations, params)
+    
+    # Check for error in equilibrium computation
+    if haskey(equilibrium, "error")
+        if debug_print
+            println("\nEquilibrium computation failed:")
+            println(get(equilibrium, "error_message", "Unknown error"))
+        end
         
-        # Get labor efficiency if available, otherwise use 1.0
-        new_labor_efficiency = get(equilibrium, "Labor_Efficiency", 1.0)
-        
-        # Update emissions
-        new_emissions = state.emissions + equilibrium["η_t"] * equilibrium["Y_t"]
-        
-        # Update damage beliefs
-        θ_new = state.θ_mean
-        θ_std_new = state.θ_std * 0.95  # Simple uncertainty reduction
-        
+        # Return penalized state with proper boolean error flag
         return PolicyState(
             state.time + 1,
-            equilibrium,
-            new_emissions,
-            θ_new,
-            θ_std_new,
+            Dict{String, Float64}(
+                "error_state" => true,
+                "Y_t" => 0.0,
+                "η_t" => state.economic_state["η_t"],
+                "Labor_Efficiency" => 0.0,
+                "Technology_Split" => 0.0
+            ),
+            state.emissions * 1.1,
+            state.θ_mean,
+            state.θ_std,
             vcat(state.tax_history, action.τ_current),
-            state.credibility,
+            state.credibility * 0.9,
             state.technology_params,
-            new_labor_efficiency
+            0.0,
+            0.0
         )
-    catch e
-        if debug_print
-            println("\nError in step_environment:")
-            println("Action: τ_current = $(action.τ_current), τ_announced = $(action.τ_announced)")
-            println("State: time = $(state.time), credibility = $(state.credibility)")
-            println("Error: $e")
-        end
-        rethrow(e)
     end
+    
+    # Normal state update for successful computation
+    new_labor_efficiency = get(equilibrium, "Labor_Efficiency", 1.0)
+    new_emissions = state.emissions + equilibrium["η_t"] * equilibrium["Y_t"]
+    θ_new = state.θ_mean
+    θ_std_new = state.θ_std * 0.95
+    
+    return PolicyState(
+        state.time + 1,
+        equilibrium,
+        new_emissions,
+        θ_new,
+        θ_std_new,
+        vcat(state.tax_history, action.τ_current),
+        state.credibility,
+        state.technology_params,
+        new_labor_efficiency,
+        get(equilibrium, "Technology_Split", 0.5)
+    )
 end
 
 # Core MCTS Functions
@@ -255,21 +271,23 @@ end
 
 # Evaluation Functions
 function evaluate_state(state::PolicyState, params::ModelParameters)
-    # Economic output (already includes labor efficiency effects)
+    # Check if state is economically infeasible
+    if haskey(state.economic_state, "error_state")
+        return -1000.0  # Large penalty for infeasible states
+    end
+
+    # Normal evaluation for feasible states
     output = state.economic_state["Y_t"]
-    
-    # Climate damages
     damages = damage_function(state.emissions, state.θ_mean)
     
-    # Tax revenue
     current_tax = isempty(state.tax_history) ? 0.0 : last(state.tax_history)
     tax_revenue = current_tax * output
     
-    # Labor efficiency penalty (small penalty for low efficiency)
     efficiency_penalty = (1.0 - state.labor_efficiency) * output * 0.1
+    split_penalty = abs(state.technology_split - 0.5) * output * 0.05
     
-    # Total utility: output - damages + weighted tax revenue - efficiency penalty
-    return output - damages + params.tax_revenue_weight * tax_revenue - efficiency_penalty
+    return output - damages + params.tax_revenue_weight * tax_revenue - 
+           efficiency_penalty - split_penalty
 end
 
 function damage_function(emissions::Float64, θ::Float64)
@@ -314,7 +332,8 @@ function initialize_mcts(;
         Float64[],
         credibility,
         initial_tech_params,
-        initial_labor_efficiency
+        initial_labor_efficiency,
+        get(initial_econ_state, "Technology_Split", 0.5)  # Default to balanced split
     )
 end
 

@@ -4,7 +4,7 @@ include("model_parameters.jl")
 using .ModelParametersModule: ModelParameters, DEFAULT_PARAMS
 
 # Then include model core
-include("model_core_skill_fix.jl")
+include("model_core_partial_investment.jl")
 
 # Finally include MCTS implementation
 include("mcts_better_parallelisation.jl")
