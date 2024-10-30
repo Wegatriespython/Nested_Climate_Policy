@@ -1,13 +1,13 @@
 using Random
 # First include parameters
-include("model_parameters.jl")
+include("Model_parameters.jl")
 using .ModelParametersModule: ModelParameters, DEFAULT_PARAMS
 
 # Then include model core
-include("model_core_partial_investment.jl")
+include("GE_model_core.jl")
 
 # Finally include MCTS implementation
-include("mcts_better_parallelisation.jl")
+include("Parallel_MCTS.jl")
 
 # Example of creating custom parameters
 const ALTERNATIVE_PARAMS = ModelParameters(

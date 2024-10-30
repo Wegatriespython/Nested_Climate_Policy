@@ -3,7 +3,7 @@ using StatsBase  # For weighted sampling
 using Distributions  # Import the package
 using StatsBase: quantile, cut
 
-include("model_core_partial_investment.jl")
+include("GE_model_core.jl")
 using .ModelParametersModule: ModelParameters, DEFAULT_PARAMS
 
 function bounded_normal(μ, σ, lower, upper)
