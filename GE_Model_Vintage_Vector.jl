@@ -122,129 +122,156 @@ function sample_technology(expectations::PolicyExpectations, params::ModelParame
         end
     end
     
-    # Sample current period technology (represents existing firms)
-    A_0, η_0 = sample_truncated()
+    # Sample initial period (-1) technology - no constraints
+    n_samples = 10
+    tech_minus1 = [sample_truncated() for _ in 1:n_samples]
     
-    # For future technology, sample multiple possibilities and select best
-    n_samples = 100
-    future_technologies = [sample_truncated() for _ in 1:n_samples]
-    
-    # Filter for technological improvement
-    function effective_productivity(A, η, τ)
-        return A * (1 - τ * η)
+    # Sample period 0 technologies with constraint relative to -1
+    function sample_period_0()
+        samples = [sample_truncated() for _ in 1:n_samples]
+        # Filter for improvement over best period -1 technology
+        base_productivity = maximum(A * (1 - expectations.τ_current * η) 
+                                 for (A, η) in tech_minus1)
+        return filter(tech -> 
+            tech[1] * (1 - expectations.τ_current * tech[2]) > base_productivity,
+            samples)
     end
+    tech_0 = sample_period_0()
     
-    base_productivity = effective_productivity(A_0, η_0, expectations.τ_current)
-    
-    # Select future technology that maximizes improvement
-    valid_improvements = filter(tech -> 
-        effective_productivity(tech[1], tech[2], expectations.τ_announced) > base_productivity,
-        future_technologies)
-    
-    if isempty(valid_improvements)
-        # If no improvements found, stay with current technology
-        return (A_0, η_0, A_0, η_0)
-    else
-        # Select the best improvement
-        A_1, η_1 = argmax(tech -> 
-            effective_productivity(tech[1], tech[2], expectations.τ_announced),
-            valid_improvements)
-        return (A_0, η_0, A_1, η_1)
+    # Sample period 1 technologies with constraint relative to 0
+    function sample_period_1()
+        samples = [sample_truncated() for _ in 1:n_samples]
+        # Filter for improvement over best period 0 technology
+        base_productivity = maximum(A * (1 - expectations.τ_announced * η) 
+                                 for (A, η) in tech_0)
+        return filter(tech -> 
+            tech[1] * (1 - expectations.τ_announced * tech[2]) > base_productivity,
+            samples)
     end
+    tech_1 = sample_period_1()
+    
+    return (tech_minus1, tech_0, tech_1)
 end
 
 # Core equilibrium solver with partial investment
-function compute_equilibrium_core(τ_0::Float64, τ_1::Float64, A_init::Float64, η_init::Float64, A_0::Float64, η_0::Float64, A_1::Float64, η_1::Float64, skill_factor::Float64, params::ModelParameters)
-    # Initial conditions and normalizations
+function compute_equilibrium_core(τ_0::Float64, τ_1::Float64, 
+                                tech_minus1::Vector{Tuple{Float64,Float64}}, 
+                                tech_0::Vector{Tuple{Float64,Float64}}, 
+                                tech_1::Vector{Tuple{Float64,Float64}}, 
+                                skill_factor::Float64, params::ModelParameters)
     K_init = params.K_init
+    n_tech = length(tech_minus1)
     
-    # Base output for scaling (using initial technology)
-    Y_base = A_init * (K_init^params.α)
-    output_norm = 1.0 / Y_base
-
     model = Model(Ipopt.Optimizer)
     set_silent(model)
-    # Adjust solver parameters for better numerical stability
-    set_optimizer_attribute(model, "max_iter", 10000)
-    set_optimizer_attribute(model, "tol", 1e-4)
-    set_optimizer_attribute(model, "acceptable_tol", 1e-4)
-
-    #set model to silent
-
     
-    # Variables with starting points - corrected syntax
+    # Portfolio variables
+    @variable(model, K_0[1:n_tech] >= 0)  # Capital stock in each technology
+    @variable(model, K_1[1:n_tech] >= 0)
+    
+    @variable(model, θ_0[1:n_tech] >= 0)  # Fraction of tech_minus1 replaced by tech_0
+    @variable(model, θ_1[1:n_tech] >= 0)  # Fraction of portfolio_0 replaced by tech_1
+    
+    # Standard macro variables
     @variable(model, C_0 >= 0.001, start = 0.5)
     @variable(model, C_1 >= 0.001, start = 0.5)
     @variable(model, 0.001 <= L_0 <= 1.0, start = 0.3)
     @variable(model, 0.001 <= L_1 <= 1.0, start = 0.3)
-    @variable(model, I_0 >= 0.001, start = K_init)
-    @variable(model, I_1 >= 0.001, start = K_init)
 
-    # Set upper bounds separately if needed
-    set_upper_bound(C_0, 5.0)
-    set_upper_bound(C_1, 5.0)
-
+    # Portfolio transitions
+    @expression(model, portfolio_0[i=1:n_tech], 
+        (1 - θ_0[i])*tech_minus1[i] + θ_0[i]*tech_0[i])
     
-    # Capital stock expressions
-    @expression(model, K_stock_0, K_init + I_0)
-    @expression(model, K_stock_1, (1-params.δ)*K_stock_0 + I_1)
-    
-    # First define the investment fractions
-    @expression(model, frac_0, I_0/K_init)
-    @expression(model, frac_1, I_1/K_stock_0)  
+    @expression(model, portfolio_1[i=1:n_tech], 
+        (1 - θ_1[i])*portfolio_0[i] + θ_1[i]*tech_1[i])
 
-
-                    
-    # Technology adoption expressions with safeguards (now frac_0 and frac_1 are defined)
-    @expression(model, A_eff_0, ((1-frac_0) * A_init + frac_0* A_0))             
-    @expression(model, η_eff_0, ((1-frac_0) * η_init + frac_0 * η_0))
-    @expression(model, A_eff_1, ((1-frac_1) * A_eff_0 + frac_1 * A_1))
-    @expression(model, η_eff_1, ((1-frac_1) * η_eff_0 + frac_1 * η_1))
+    # Effective technology levels
+    @expression(model, A_eff_0, sum(
+        (K_0[i]/K_total_0) * ((1 - θ_0[i])*tech_minus1[i][1] + θ_0[i]*tech_0[i][1])
+        for i in 1:n_tech))
     
-    # Adjustment costs with numerical safeguards
-    @expression(model, Δη_0, η_eff_0 - η_init)
+    @expression(model, η_eff_0, sum(
+        (K_0[i]/K_total_0) * ((1 - θ_0[i])*tech_minus1[i][2] + θ_0[i]*tech_0[i][2])
+        for i in 1:n_tech))
+    
+    @expression(model, A_eff_1, sum(
+        (K_1[i]/K_total_1) * ((1 - θ_1[i])*portfolio_0[i][1] + θ_1[i]*tech_1[i][1])
+        for i in 1:n_tech))
+    
+    @expression(model, η_eff_1, sum(
+        (K_1[i]/K_total_1) * ((1 - θ_1[i])*portfolio_0[i][2] + θ_1[i]*tech_1[i][2])
+        for i in 1:n_tech))
+
+    # Technology change for adjustment costs
+    @expression(model, Δη_0, η_eff_0 - sum((1/n_tech) * tech_minus1[i][2] for i in 1:n_tech))
     @expression(model, Δη_1, η_eff_1 - η_eff_0)
-    @expression(model, labor_efficiency_0, 1 / (1 + params.γ * Δη_0^2 * skill_factor))
-    @expression(model, labor_efficiency_1, 1 / (1 + params.γ * Δη_1^2 * skill_factor))
+
+    # Capital evolution with portfolio transitions
+    @constraint(model, [i=1:n_tech], 
+        K_0[i] == (1-params.δ)*K_init/n_tech + 
+                  (K_total_0 - (1-params.δ)*K_init)*θ_0[i])
+
+    @constraint(model, [i=1:n_tech], 
+        K_1[i] == (1-params.δ)*K_0[i] + 
+                  (K_total_1 - (1-params.δ)*K_total_0)*θ_1[i])
     
-    # Production with safeguards
-    @expression(model, Y_0, (1 - τ_0*η_eff_0) * A_eff_0 * K_stock_0^params.α * 
+    # Total capital expressions
+    @expression(model, K_total_0, sum(K_0))
+    @expression(model, K_total_1, sum(K_1))
+    
+    @constraint(model, [i=1:n_tech], 0 <= θ_0[i] <= 1)
+    @constraint(model, [i=1:n_tech], 0 <= θ_1[i] <= 1)
+
+    @constraint(model, sum(K_0[i]/K_total_θ for i in 1:n_tech) == 1)
+    @constraint(model, sum(K_1[i]/K_total_1 for i in 1:n_tech) == 1)
+
+    # Net investment calculations
+    @expression(model, I_0, K_total_0 - (1-params.δ)*K_init)
+    @expression(model, I_1, K_total_1 - (1-params.δ)*K_total_0)
+    
+    # Adjustment costs based on both rebalancing and capital changes
+    @expression(model, tech_adjustment_0, 
+        sum(θ_0[i]^2 * K_0[i]/K_total_0 for i in 1:n_tech))
+    
+    @expression(model, tech_adjustment_1,
+        sum(θ_1[i]^2 * K_1[i]/K_total_1 for i in 1:n_tech))
+
+    # Production function
+    @expression(model, Y_0, (1 - τ_0*η_eff_0) * A_eff_0 * K_total_0^params.α * 
                (labor_efficiency_0 * L_0)^(1-params.α))
-    @expression(model, Y_1, (1 - τ_1*η_eff_1) * A_eff_1 * K_stock_1^params.α * 
+    @expression(model, Y_1, (1 - τ_1*η_eff_1) * A_eff_1 * K_total_1^params.α * 
                (labor_efficiency_1 * L_1)^(1-params.α))
-    
-    # Interest rates with safeguards
-    @expression(model, r_0, params.α * Y_0 / max(K_stock_0, 0.001) - params.δ)
-    @expression(model, r_1, params.α * Y_1 / max(K_stock_1, 0.001) - params.δ)
-    
-    # Wages
+
+    # Budget constraints include both investment and adjustment costs
+    @constraint(model, C_0 + I_0 + params.investment_adjustment_cost * tech_adjustment_0 == Y_0)
+    @constraint(model, C_1 + I_1 + params.investment_adjustment_cost * tech_adjustment_1 == Y_1)
+
+    # Factor prices
+    @expression(model, r_0, params.α * Y_0 / max(K_total_0, 0.001) - params.δ)
+    @expression(model, r_1, params.α * Y_1 / max(K_total_1, 0.001) - params.δ)
     @expression(model, w_0, (1-params.α) * Y_0 / max(labor_efficiency_0 * L_0, 0.001))
     @expression(model, w_1, (1-params.α) * Y_1 / max(labor_efficiency_1 * L_1, 0.001))
 
-    # Budget constraints
-    @constraint(model, C_0 + I_0 == Y_0)
-    @constraint(model, C_1 + I_1 == Y_1)
+    # Labor efficiency based on technology changes
+    @expression(model, labor_efficiency_0, 1 / (1 + params.γ * Δη_0^2 * skill_factor))
+    @expression(model, labor_efficiency_1, 1 / (1 + params.γ * Δη_1^2 * skill_factor))
 
-    # Euler equations (reformulated for better numerical stability)
+    # Euler equations
     @constraint(model, params.σ * (log(C_1) - log(C_0)) == log(params.β) + log(1 + r_1))
-
     @constraint(model, log(params.χ) + params.ν*log(L_0) == log(w_0) - params.σ*log(C_0))
     @constraint(model, log(params.χ) + params.ν*log(L_1) == log(w_1) - params.σ*log(C_1))
 
+    # Objective function
     @objective(model, Max, 
         (C_0^(1-params.σ))/(1-params.σ) - params.χ*L_0^(1+params.ν)/(1+params.ν) +
         params.β * ((C_1^(1-params.σ))/(1-params.σ) - params.χ*L_1^(1+params.ν)/(1+params.ν))
     )
 
-    # Add these constraints after all expressions are defined
-    @constraint(model, 0 <= frac_0 <= 1.0)
-    @constraint(model, 0 <= frac_1 <= 1.0)
-
     optimize!(model)
     
+    # Error handling remains the same...
     status = termination_status(model)
     if status != MOI.LOCALLY_SOLVED && status != MOI.OPTIMAL
-        # Create detailed parameter dump
         param_dump = """
         Optimization failed with status: $status
         
@@ -252,10 +279,9 @@ function compute_equilibrium_core(τ_0::Float64, τ_1::Float64, A_init::Float64,
         ----------------
         τ_0: $τ_0
         τ_1: $τ_1
-        A_init: $A_init
-        η_init: $η_init
-        A_0: $A_0, η_0: $η_0
-        A_1: $A_1, η_1: $η_1
+        tech_minus1: $tech_minus1
+        tech_0: $tech_0
+        tech_1: $tech_1
         skill_factor: $skill_factor
         
         K_init: $(params.K_init)
@@ -267,36 +293,8 @@ function compute_equilibrium_core(τ_0::Float64, τ_1::Float64, A_init::Float64,
         println(param_dump)
         error(param_dump)
     end
-    
-    # Return results with technology split information and evaluated labor efficiency
-    return Dict(
-        "C_0" => value(C_0) / output_norm,
-        "C_1" => value(C_1) / output_norm,
-        "L_0" => value(L_0),
-        "L_1" => value(L_1),
-        "K_0" => value(K_stock_0) / output_norm,
-        "K_1" => value(K_stock_1) / output_norm,
-        "w_0" => value(w_0) / output_norm,
-        "w_1" => value(w_1) / output_norm,
-        "r_0" => value(r_0),
-        "r_1" => value(r_1),
-        "Y_0" => value(Y_0) / output_norm,
-        "Y_1" => value(Y_1) / output_norm,
-        "E_0" => value(Y_0 * η_eff_0),
-        "E_1" => value(Y_1 * η_eff_1),
-        "A_0" => A_0,
-        "A_1" => A_1,
-        "η_0" => η_0,
-        "η_1" => η_1,
-        "Technology_Split_0" => value(frac_0),
-        "Technology_Split_1" => value(frac_1),
-        "Labor_Efficiency_0" => value(labor_efficiency_0),
-        "Labor_Efficiency_1" => value(labor_efficiency_1),
-        "A_0_eff" => value(A_eff_0),
-        "A_1_eff" => value(A_eff_1),
-        "η_0_eff" => value(η_eff_0),
-        "η_1_eff" => value(η_eff_1)
-    )
+
+    # Return statement will need to be updated to include portfolio information...
 end
 
 # Wrapper handles all stochastic elements
