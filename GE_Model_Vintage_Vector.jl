@@ -218,13 +218,13 @@ function compute_equilibrium_core(τ_0::Float64, τ_1::Float64,
     # Total capital expressions
     @expression(model, K_total_0, sum(K_0))
     @expression(model, K_total_1, sum(K_1))
-    
-    @constraint(model, [i=1:n_tech], 0 <= θ_0[i] <= 1)
-    @constraint(model, [i=1:n_tech], 0 <= θ_1[i] <= 1)
 
+    # Not sure about this one. The idea is to ensure normalisation. But Im confused. 
     @constraint(model, sum(K_0[i]/K_total_θ for i in 1:n_tech) == 1)
     @constraint(model, sum(K_1[i]/K_total_1 for i in 1:n_tech) == 1)
-
+    
+    @constraint(model, sum(θ_0[i])==1)
+    @constraint(model, sum(θ_1[i])==1)
     # Net investment calculations
     @expression(model, I_0, K_total_0 - (1-params.δ)*K_init)
     @expression(model, I_1, K_total_1 - (1-params.δ)*K_total_0)
