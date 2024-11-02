@@ -66,8 +66,8 @@ Generate Vintage Portfolios using Dirichlet sampling
 function generate_vintage_portfolios_dirichlet(
     tech_minus1::TechnologySet,
     tech0::TechnologySet;
-    n_samples::Int=50,  # Samples per split
-    n_splits::Int=10    # Number of splits between old and new tech
+    n_samples::Int=50,
+    n_splits::Int=10
 )::Vector{VintagePortfolio}
     portfolios = Vector{VintagePortfolio}()
     
@@ -87,30 +87,35 @@ function generate_vintage_portfolios_dirichlet(
         operated_weights = generate_weight_matrix_dirichlet(n_operated, n_samples)
         new_weights = generate_weight_matrix_dirichlet(n_new, n_samples)
         
-        # Scale weights by split
-        op_weight_scaled = operated_weights .* split
-        new_weight_scaled = new_weights .* (1 - split)
+        println("Debug split=$split:")
+        println("operated_weights sum: $(sum(operated_weights, dims=2))")
+        println("new_weights sum: $(sum(new_weights, dims=2))")
         
-        # Create portfolios from samples
+        # Scale weights by split while maintaining sum = 1
         for i in 1:n_samples
-            # Create normalized weights
-            total_weight = sum(op_weight_scaled[i,:]) + sum(new_weight_scaled[i,:])
-            if total_weight ≈ 0
-                continue
-            end
+            # Normalize operated weights to sum to split
+            op_sum = sum(operated_weights[i,:])
+            operated_weights[i,:] = operated_weights[i,:] * (split/op_sum)
             
-            normalized_op = reshape(op_weight_scaled[i,:], 1, :) ./ total_weight
-            normalized_new = reshape(new_weight_scaled[i,:], 1, :) ./ total_weight
+            # Normalize new weights to sum to (1-split)
+            new_sum = sum(new_weights[i,:])
+            new_weights[i,:] = new_weights[i,:] * ((1-split)/new_sum)
+            
+            # Verify total weights sum to 1
+            total = sum(operated_weights[i,:]) + sum(new_weights[i,:])
+            if abs(total - 1.0) >= 1e-10
+                println("Warning: weights don't sum to 1 at i=$i: total=$total")
+            end
             
             # Create portfolio
             portfolio = VintagePortfolio(
                 existing_capital=OperatedCapital(
-                    weights=normalized_op,
+                    weights=reshape(operated_weights[i,:], 1, :),
                     base_tech=tech_minus1,
                     operation_mode=operated_tech
                 ),
                 new_investment=NewInvestment(
-                    weights=normalized_new,
+                    weights=reshape(new_weights[i,:], 1, :),
                     technologies=tech0
                 )
             )
@@ -128,29 +133,41 @@ Generate operation modes for a given technology set
 function generate_operation_modes(
     old_tech::TechnologySet,
     new_tech::TechnologySet;
-    n_modes::Int=3  # Number of operation modes per technology
+    n_modes::Int=3
 )::TechnologySet
-    n_old = length(old_tech.A)
-    
-    # Generate mode factors evenly spaced between 0 and 1
     mode_factors = LinRange(0, 1, n_modes)
-    A_new = maximum(new_tech.A)
-    η_new = minimum(new_tech.η)
     
-    A_composite = Float64[]
-    η_composite = Float64[]
+    # Use Set of tuples to keep A and η pairs together
+    modes = Set{Tuple{Float64, Float64}}()
     
-    for i in 1:n_old
-        for mode in mode_factors
-            # Compute weighted combination of old and new technology characteristics
-            A_mode = old_tech.A[i] * (1 - mode) + A_new * mode
-            η_mode = old_tech.η[i] * (1 - mode) + η_new * mode
-            push!(A_composite, A_mode)
-            push!(η_composite, η_mode)
+    # For each old technology
+    for i in 1:length(old_tech.A)
+        # Add pure old tech mode
+        push!(modes, (old_tech.A[i], old_tech.η[i]))
+        
+        for j in 1:length(new_tech.A)
+            if new_tech.A[j] >= old_tech.A[i]
+                for mode in mode_factors
+                    A_mode = old_tech.A[i] * (1 - mode) + new_tech.A[j] * mode
+                    η_mode = old_tech.η[i] * (1 - mode) + new_tech.η[j] * mode
+                    push!(modes, (A_mode, η_mode))
+                end
+            end
         end
     end
     
-    println("Debug: Generated $(length(A_composite)) operation modes")
+    # Unzip the tuples into separate vectors
+    A_composite = Float64[]
+    η_composite = Float64[]
+    for (a, η) in modes
+        push!(A_composite, a)
+        push!(η_composite, η)
+    end
+    
+    println("Debug: Generated $(length(modes)) unique operation modes")
+    println("Debug: Operation mode A range: $(extrema(A_composite))")
+    println("Debug: Operation mode η range: $(extrema(η_composite))")
+    
     return TechnologySet(A_composite, η_composite)
 end
 
@@ -158,17 +175,43 @@ end
 Calculate effective characteristics for a single portfolio
 """
 function compute_effective_characteristics(p::VintagePortfolio)::Tuple{Float64, Float64}
-    # Existing capital contribution
-    A_existing = sum(p.existing_capital.weights .* p.existing_capital.operation_mode.A)
-    η_existing = sum(p.existing_capital.weights .* p.existing_capital.operation_mode.η)
+    total_existing = sum(p.existing_capital.weights)
+    total_new = sum(p.new_investment.weights)
+    total = total_existing + total_new
     
-    # New investment contribution
-    A_new = sum(p.new_investment.weights .* p.new_investment.technologies.A)
-    η_new = sum(p.new_investment.weights .* p.new_investment.technologies.η)
+    println("Debug weights: existing=$total_existing, new=$total_new, total=$total")
     
-    # Total effective characteristics
-    A_eff = A_existing + A_new
-    η_eff = η_existing + η_new
+    @assert abs(total - 1.0) < 1e-10 "Portfolio weights don't sum to 1"
+    
+    # Add debug prints before each calculation
+    println("Debug existing capital:")
+    println("weights: $(vec(p.existing_capital.weights))")
+    println("A values: $(p.existing_capital.operation_mode.A)")
+    println("η values: $(p.existing_capital.operation_mode.η)")
+    
+    # Calculate weighted averages for each category
+    A_existing = sum(vec(p.existing_capital.weights) .* p.existing_capital.operation_mode.A) / total_existing
+    η_existing = sum(vec(p.existing_capital.weights) .* p.existing_capital.operation_mode.η) / total_existing
+    
+    println("Debug A_existing: $A_existing")
+    println("Debug η_existing: $η_existing")
+    
+    println("Debug new investment:")
+    println("weights: $(vec(p.new_investment.weights))")
+    println("A values: $(p.new_investment.technologies.A)")
+    println("η values: $(p.new_investment.technologies.η)")
+    
+    A_new = sum(vec(p.new_investment.weights) .* p.new_investment.technologies.A) / total_new
+    η_new = sum(vec(p.new_investment.weights) .* p.new_investment.technologies.η) / total_new
+    
+    println("Debug A_new: $A_new")
+    println("Debug η_new: $η_new")
+    
+    # Take weighted average between categories
+    A_eff = A_existing * total_existing + A_new * total_new
+    η_eff = η_existing * total_existing + η_new * total_new
+    
+    println("Debug final: A_eff=$A_eff, η_eff=$η_eff")
     
     return (A_eff, η_eff)
 end

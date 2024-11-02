@@ -1,4 +1,7 @@
-### Complete General Vintage Capital Model with No-Arbitrage
+# Complete General Vintage Capital Model with No-Arbitrage
+
+
+## Discrete Case 
 
 **1. Fundamental Sets**:
 - Time: $t \in T$
@@ -154,3 +157,57 @@ $NPV(R_{v\rightarrow w,t}) = \sum_{s\geq t} \beta^{s-t}(A_{w\rightarrow w,s} - A
   - Reallocation options
   - Future technology adaptation potential
 - No-arbitrage ensures consistent valuation across all feasible uses
+
+## Continous Case
+
+### 1. State Variables for Vintage Capital Dynamics
+- **Capital Matrix** \( K_{v\rightarrow w}(t) \): Analogous to an asset’s value in portfolio models, representing capital from vintage \( v \) operating under technology \( w \).
+- **Investment Vector** \( I_v(t) \): New capital invested in vintage \( v \) at time \( t \), akin to a cash inflow or direct investment term.
+- **Reallocation Matrix** \( R_{v\rightarrow w}(t) \): Similar to a reallocation weight, modeling capital transfers between vintages.
+- **Depreciation Matrix** \( \delta_{v\rightarrow w}(t) \): Depreciation rate, representing a reduction in capital value over time for each vintage-technology pair.
+
+### 2. Continuous-Time Dynamics for Capital Evolution
+For each vintage-technology pair \( (v, w) \), capital \( K_{v\rightarrow w}(t) \) evolves by:
+\[
+\frac{dK_{v\rightarrow w}}{dt} = I_v(t)\cdot\mathbb{1}_{\{v=w\}} + R_{v\rightarrow w}(t) - \delta_{v\rightarrow w}(t) \cdot K_{v\rightarrow w}(t)
+\]
+- **Investment Flow**: Captures initial capital input.
+- **Reallocation Flow**: Dictates reallocation from vintage \( v \) to \( w \) based on compatibility and cost conditions.
+- **Depreciation Flow**: Reduces capital over time, unique to each vintage pair.
+
+### 3. No-Arbitrage Condition and Reallocation Costs
+The no-arbitrage principle is enforced by:
+\[
+C_{v\rightarrow w}(t) = P_v(t) - P_w(t) + \tau_{v\rightarrow w}(t)
+\]
+where \( P_v(t) \) is the price of vintage \( v \), \( P_w(t) \) is the price of technology \( w \), and \( \tau_{v\rightarrow w}(t) \) accounts for reallocation costs. This term ensures that productivity gains reflect true economic value, analogous to a non-arbitrage pricing model where price differentials reflect cost and risk adjustments.
+
+### 4. Capital Conservation and Fractional Dynamics
+The conservation equations ensure a balanced system across vintages:
+\[
+\sum_v \sum_w K_{v\rightarrow w}(t) = K(t) \quad \text{and} \quad \sum_v \alpha_{v\rightarrow w}(t) = 1
+\]
+where \( \alpha_{v\rightarrow w}(t) \) represents allocation fractions, akin to portfolio weights, maintaining capital distribution coherence.
+
+### 5. Price Formation and Future Value
+Using a no-arbitrage price expectation for each vintage:
+\[
+P_v(t) = \mathbb{E}_t\left[\sum_{s \geq t} \beta^{s-t} \left( \max\{A_{v \rightarrow w, s} - C_{v \rightarrow w, s} - E_{v \rightarrow w, s} \cdot \pi_s \} \right) \right]
+\]
+where \( \pi_s \) is the emissions price. This formulation is comparable to an expected utility framework over a time horizon with discounting, capturing future returns and costs.
+
+### 6. Field Equations for System Evolution
+The system's state can be modeled with a field equation representing the probability density over capital configurations \( \rho(K_{v\rightarrow w}, t) \):
+\[
+\frac{\partial \rho}{\partial t} = - \sum_{v, w} \frac{\partial}{\partial K_{v\rightarrow w}} \left( \left(I_v(t)\cdot\mathbb{1}_{\{v=w\}} + R_{v\rightarrow w}(t) - \delta_{v\rightarrow w}(t) K_{v\rightarrow w} \right) \rho \right)
+\]
+This PDE tracks how the distribution of capital evolves due to investment, reallocation, and depreciation effects.
+
+### 7. Path Integral for Aggregate Outcomes
+Path integrals can capture all potential system trajectories, summing configurations across capital matrices:
+\[
+\mathcal{S} = \int_0^T \left( \sum_{v, w} \frac{1}{2} \left( \frac{dK_{v\rightarrow w}}{dt} \right)^2 + V(K_{v\rightarrow w}) \right) dt
+\]
+where \( V(K_{v\rightarrow w}) \) represents constraints and target conditions for capital reallocation. This setup weighs each path by its likelihood, ensuring coherent aggregate outcomes across all potential reallocation dynamics.
+
+In this way, the model captures vintage dynamics as a continuous system, balancing reallocation constraints and no-arbitrage conditions across evolving capital states, much like a continuous rebalancing portfolio with compatibility constraints and time-dependent adjustments.
